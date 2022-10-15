@@ -55,10 +55,10 @@ with torch.no_grad():
     tensor = transform(data)
     tensor = torch.reshape(tensor, (1, 3, 32, 32))
     # tensor = transform(tensor.cuda())
-    print(tensor.shape)
+    # print(tensor.shape)
 
-    print(type(tensor))
-    print(tensor)
+    # print(type(tensor))
+    # print(tensor)
 
     result = net(tensor.cuda())
     print(result)
