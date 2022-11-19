@@ -1,6 +1,5 @@
 # This is a sample Python script.
-from network import Network
-from train import Train
+from networks.train import Train
 
 
 # Press Shift+F10 to execute it or replace it with your code.

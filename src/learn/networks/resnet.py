@@ -121,44 +121,31 @@ class Bottleneck(nn.Module):
 
     def __init__(
             self,
-            in_channels: int,
-            out_channels: int,
+            in_planes: int,
+            planes: int,
             stride: int = 1,
             down_sample: Optional[nn.Module] = None,
             groups: int = 1,
             base_width: int = 64,
             dilation: int = 1,
-            norm_layer: Optional[Callable[..., nn.Module]] = None):
-        """
-        :param in_channels:
-        :param out_channels:
-        :param stride:
-        :param down_sample:
-        :param groups:
-        :param base_width:
-        :param dilation:
-        :param norm_layer:
-        """
+            norm_layer: Optional[Callable[..., nn.Module]] = None,
+    ) -> None:
         super().__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
-        width = int(out_channels * (base_width / 64.0)) * groups
+        width = int(planes * (base_width / 64.0)) * groups
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
-        self.conv1 = conv1x1(in_channels, width)
+        self.conv1 = conv1x1(in_planes, width)
         self.bn1 = norm_layer(width)
         self.conv2 = conv3x3(width, width, stride, groups, dilation)
         self.bn2 = norm_layer(width)
-        self.conv3 = conv1x1(width, out_channels * self.expansion)
-        self.bn3 = norm_layer(out_channels * self.expansion)
+        self.conv3 = conv1x1(width, planes * self.expansion)
+        self.bn3 = norm_layer(planes * self.expansion)
         self.relu = nn.ReLU(inplace=True)
         self.down_sample = down_sample
         self.stride = stride
 
     def forward(self, x: Tensor) -> Tensor:
-        """
-        :param x:
-        :return:
-        """
         identity = x
 
         out = self.conv1(x)
@@ -191,25 +178,16 @@ class ResNet(nn.Module):
             groups: int = 1,
             width_per_group: int = 64,
             replace_stride_with_dilation: Optional[List[bool]] = None,
-            norm_layer: Optional[Callable[..., nn.Module]] = None):
-        """
-        :param block:
-        :param layers:
-        :param num_classes:
-        :param zero_init_residual:
-        :param groups:
-        :param width_per_group:
-        :param replace_stride_with_dilation:
-        :param norm_layer:
-        """
+            norm_layer: Optional[Callable[..., nn.Module]] = None,
+    ) -> None:
         super().__init__()
         # _log_api_usage_once(self)
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
 
-        self.in_channels: int = 64
-        self.dilation: int = 1
+        self.in_planes = 64
+        self.dilation = 1
         if replace_stride_with_dilation is None:
             # each element in the tuple indicates if we should replace
             # the 2x2 stride with a dilated convolution instead
@@ -221,8 +199,8 @@ class ResNet(nn.Module):
             )
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.in_channels, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = norm_layer(self.in_channels)
+        self.conv1 = nn.Conv2d(3, self.in_planes, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = norm_layer(self.in_planes)
         self.relu = nn.ReLU(inplace=True)
         self.max_pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -255,42 +233,28 @@ class ResNet(nn.Module):
             planes: int,
             blocks: int,
             stride: int = 1,
-            dilate: bool = False) -> nn.Sequential:
-        """
-        :param block:
-        :param planes:
-        :param blocks:
-        :param stride:
-        :param dilate:
-        :return:
-        """
+            dilate: bool = False,
+    ) -> nn.Sequential:
         norm_layer = self._norm_layer
         down_sample = None
         previous_dilation = self.dilation
         if dilate:
             self.dilation *= stride
             stride = 1
-        if stride != 1 or self.in_channels != planes * block.expansion:
+        if stride != 1 or self.in_planes != planes * block.expansion:
             down_sample = nn.Sequential(
-                conv1x1(self.in_channels, planes * block.expansion, stride),
+                conv1x1(self.in_planes, planes * block.expansion, stride),
                 norm_layer(planes * block.expansion),
             )
 
         layers = [block(
-            in_channels=self.in_channels,
-            out_channels=planes,
-            stride=stride,
-            down_sample=down_sample,
-            groups=self.groups,
-            base_width=self.base_width,
-            dilation=previous_dilation,
-            norm_layer=norm_layer
+            self.in_planes, planes, stride, down_sample, self.groups, self.base_width, previous_dilation, norm_layer
         )]
-        self.in_channels = planes * block.expansion
+        self.in_planes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(
                 block(
-                    self.in_channels,
+                    self.in_planes,
                     planes,
                     groups=self.groups,
                     base_width=self.base_width,
@@ -302,10 +266,6 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x: Tensor) -> Tensor:
-        """
-        :param x:
-        :return:
-        """
         # See note [TorchScript super()]
         x = self.conv1(x)
         x = self.bn1(x)
@@ -325,25 +285,94 @@ class ResNet(nn.Module):
 
 
 class ResNet18(ResNet):
-    def __init__(self):
-        super(ResNet18, self).__init__(block=ResidualBlock, layers=[2, 2, 2, 2])
+    def __init__(self,
+                 num_classes: int = 1000,
+                 zero_init_residual: bool = False,
+                 groups: int = 1,
+                 width_per_group: int = 64,
+                 replace_stride_with_dilation: Optional[List[bool]] = None,
+                 norm_layer: Optional[Callable[..., nn.Module]] = None):
+        super(ResNet18, self).__init__(block=ResidualBlock,
+                                       layers=[2, 2, 2, 2],
+                                       num_classes=num_classes,
+                                       zero_init_residual=zero_init_residual,
+                                       groups=groups,
+                                       width_per_group=width_per_group,
+                                       replace_stride_with_dilation=replace_stride_with_dilation,
+                                       norm_layer=norm_layer)
 
 
 class ResNet34(ResNet):
-    def __init__(self):
-        super(ResNet34, self).__init__(block=ResidualBlock, layers=[3, 4, 6, 3])
+    def __init__(self,
+                 num_classes: int = 1000,
+                 zero_init_residual: bool = False,
+                 groups: int = 1,
+                 width_per_group: int = 64,
+                 replace_stride_with_dilation: Optional[List[bool]] = None,
+                 norm_layer: Optional[Callable[..., nn.Module]] = None
+                 ):
+        super(ResNet34, self).__init__(block=ResidualBlock,
+                                       layers=[3, 4, 6, 3],
+                                       num_classes=num_classes,
+                                       zero_init_residual=zero_init_residual,
+                                       groups=groups,
+                                       width_per_group=width_per_group,
+                                       replace_stride_with_dilation=replace_stride_with_dilation,
+                                       norm_layer=norm_layer)
 
 
 class ResNet50(ResNet):
-    def __init__(self):
-        super(ResNet50, self).__init__(block=Bottleneck, layers=[3, 4, 6, 3])
+    def __init__(self,
+                 num_classes: int = 1000,
+                 zero_init_residual: bool = False,
+                 groups: int = 1,
+                 width_per_group: int = 64,
+                 replace_stride_with_dilation: Optional[List[bool]] = None,
+                 norm_layer: Optional[Callable[..., nn.Module]] = None
+                 ):
+        super(ResNet50, self).__init__(block=Bottleneck,
+                                       layers=[3, 4, 6, 3],
+                                       num_classes=num_classes,
+                                       zero_init_residual=zero_init_residual,
+                                       groups=groups,
+                                       width_per_group=width_per_group,
+                                       replace_stride_with_dilation=replace_stride_with_dilation,
+                                       norm_layer=norm_layer)
 
 
 class ResNet101(ResNet):
-    def __init__(self):
-        super(ResNet101, self).__init__(Bottleneck, [3, 4, 23, 3])
+    def __init__(self,
+                 num_classes: int = 1000,
+                 zero_init_residual: bool = False,
+                 groups: int = 1,
+                 width_per_group: int = 64,
+                 replace_stride_with_dilation: Optional[List[bool]] = None,
+                 norm_layer: Optional[Callable[..., nn.Module]] = None
+                 ):
+        super(ResNet101, self).__init__(block=Bottleneck,
+                                        layers=[3, 4, 23, 3],
+                                        num_classes=num_classes,
+                                        zero_init_residual=zero_init_residual,
+                                        groups=groups,
+                                        width_per_group=width_per_group,
+                                        replace_stride_with_dilation=replace_stride_with_dilation,
+                                        norm_layer=norm_layer)
 
 
 class ResNet152(ResNet):
-    def __init__(self):
-        super(ResNet152, self).__init__(Bottleneck, [3, 8, 36, 3])
+    def __init__(self,
+                 num_classes: int = 1000,
+                 zero_init_residual: bool = False,
+                 groups: int = 1,
+                 width_per_group: int = 64,
+                 replace_stride_with_dilation: Optional[List[bool]] = None,
+                 norm_layer: Optional[Callable[..., nn.Module]] = None
+                 ):
+        super(ResNet152, self).__init__(block=Bottleneck,
+                                        layers=[3, 8, 36, 3],
+                                        num_classes=num_classes,
+                                        zero_init_residual=zero_init_residual,
+                                        groups=groups,
+                                        width_per_group=width_per_group,
+                                        replace_stride_with_dilation=replace_stride_with_dilation,
+                                        norm_layer=norm_layer)

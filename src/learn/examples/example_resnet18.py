@@ -4,7 +4,7 @@ from torch import nn
 from torchvision.transforms import transforms
 
 # from resnet_18 import Resnet
-from resnet import ResNet, Bottleneck
+from networks.resnet import ResNet, Bottleneck
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 # net = Resnet(3, 10)

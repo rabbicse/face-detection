@@ -1,12 +1,8 @@
 import cv2 as cv2
-import numpy as np
 import torch
-from PIL import Image
-from torch import nn
-from torch.nn.functional import normalize
 from torchvision.transforms import transforms
 
-from network import Network
+from networks.network import Network
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 net = Network()
