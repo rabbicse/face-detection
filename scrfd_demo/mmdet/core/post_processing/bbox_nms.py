@@ -54,6 +54,8 @@ def multiclass_nms(multi_bboxes,
     # remove low scoring boxes
     valid_mask = scores > score_thr
     inds = valid_mask.nonzero(as_tuple=False).squeeze(1)
+    device = labels.device  # Get the device of `labels`
+    inds = inds.to(device)  # Move `inds` to the same device as `labels`
     bboxes, scores, labels = bboxes[inds], scores[inds], labels[inds]
     if inds.numel() == 0:
         if torch.onnx.is_in_onnx_export():
@@ -67,6 +69,7 @@ def multiclass_nms(multi_bboxes,
     if max_num > 0:
         dets = dets[:max_num]
         keep = keep[:max_num]
+    keep = keep.to(device)
 
     if return_inds:
         return dets, labels[keep], keep

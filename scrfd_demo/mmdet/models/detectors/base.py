@@ -330,6 +330,7 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
                 sg = segms[i]
                 if isinstance(sg, torch.Tensor):
                     sg = sg.detach().cpu().numpy()
+                    # sg = sg.detach().numpy()
                 mask = sg.astype(bool)
                 img[mask] = img[mask] * 0.5 + color_mask * 0.5
         # if out_file specified, do not show image in window
