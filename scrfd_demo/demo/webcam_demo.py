@@ -46,55 +46,36 @@ def main():
 
         draw_img(img, result['bbox'], result['keypoints'])
 
-        # # print(result)
-        # bbox_result = result['bboxes']
-        # bboxes = np.vstack(bbox_result)
-        # labels = [
-        #     np.full(bbox.shape[0], i, dtype=np.int32)
-        #     for i, bbox in enumerate(bbox_result)
-        # ]
-        # labels = np.concatenate(labels)
-        # scores = bboxes[:, -1]
-        # inds = scores > 0.5
-        # bboxes = bboxes[inds, :]
-        # keypoints = result['keypoints']
-        # kp = np.vstack(keypoints)
-        # kp = kp[inds, :]
-
-        # image_with_detections = draw_detections(img, [result])
-        # Display the image
-        # cv2.imshow("Detections", image_with_detections)
-
-        # model.show_result(
-        #     img, result['bboxes'], score_thr=args.score_thr, wait_time=1, show=True)
-
 
 def draw_img(frame, boxes, landmarks):
-    # boxes = boxes.astype('int32')
-
+    cv2.namedWindow('Video', cv2.WND_PROP_FULLSCREEN)
+    cv2.setWindowProperty('Video', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    rect_color = (224, 128, 20)
+    circle_color = (255, 0, 0)
     # draw bboxes
     for box in boxes:
         x_min, y_min, x_max, y_max, _ = box
-        cv2.rectangle(frame, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (255, 0, 255), 1)
+        cv2.rectangle(frame, (int(x_min), int(y_min)), (int(x_max), int(y_max)), rect_color, 1)
 
-        cv2.line(frame, (int(x_min), int(y_min)), (int(x_min + 15), int(y_min)), (255, 0, 255), 3)
-        cv2.line(frame, (int(x_min), int(y_min)), (int(x_min), int(y_min + 15)), (255, 0, 255), 3)
+        cv2.line(frame, (int(x_min), int(y_min)), (int(x_min + 15), int(y_min)), rect_color, 3)
+        cv2.line(frame, (int(x_min), int(y_min)), (int(x_min), int(y_min + 15)), rect_color, 3)
 
-        cv2.line(frame, (int(x_max), int(y_max)), (int(x_max - 15), int(y_max)), (255, 0, 255), 3)
-        cv2.line(frame, (int(x_max), int(y_max)), (int(x_max), int(y_max - 15)), (255, 0, 255), 3)
+        cv2.line(frame, (int(x_max), int(y_max)), (int(x_max - 15), int(y_max)), rect_color, 3)
+        cv2.line(frame, (int(x_max), int(y_max)), (int(x_max), int(y_max - 15)), rect_color, 3)
 
-        cv2.line(frame, (int(x_max - 15), int(y_min)), (int(x_max), int(y_min)), (255, 0, 255), 3)
-        cv2.line(frame, (int(x_max), int(y_min)), (int(x_max), int(y_min + 15)), (255, 0, 255), 3)
+        cv2.line(frame, (int(x_max - 15), int(y_min)), (int(x_max), int(y_min)), rect_color, 3)
+        cv2.line(frame, (int(x_max), int(y_min)), (int(x_max), int(y_min + 15)), rect_color, 3)
 
-        cv2.line(frame, (int(x_min), int(y_max - 15)), (int(x_min), int(y_max)), (255, 0, 255), 3)
-        cv2.line(frame, (int(x_min), int(y_max)), (int(x_min + 15), int(y_max)), (255, 0, 255), 3)
+        cv2.line(frame, (int(x_min), int(y_max - 15)), (int(x_min), int(y_max)), rect_color, 3)
+        cv2.line(frame, (int(x_min), int(y_max)), (int(x_min + 15), int(y_max)), rect_color, 3)
 
     # Draw landmarks
     for landmark in landmarks:
         for (x, y) in landmark:
-            cv2.circle(frame, (int(x), int(y)), 3, (255, 0, 0), -1)  # Blue dots
+            cv2.circle(frame, (int(x), int(y)), 4, circle_color, -1)  # Blue dots
 
     cv2.imshow('Video', frame)
+
 
 def draw_detections(image, detections):
     """

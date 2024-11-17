@@ -51,7 +51,7 @@ class SCRFD(SingleStageDetector):
                                               gt_labels, gt_keypointss, gt_bboxes_ignore)
         return losses
 
-    def simple_test(self, img, img_metas, rescale=False):
+    def simple_test(self, img, img_metas=None, rescale=False):
         """Test function without test time augmentation.
 
         Args:

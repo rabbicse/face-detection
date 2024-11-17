@@ -723,7 +723,8 @@ class SCRFDHead(AnchorHead):
             featmap_sizes, device=device)
 
         result_list = []
-        for img_id in range(len(img_metas)):
+        n = len(img_metas)
+        for img_id in range(n):
             cls_score_list = [
                 cls_scores[i][img_id].detach() for i in range(num_levels)
             ]

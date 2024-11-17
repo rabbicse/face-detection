@@ -61,7 +61,7 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
         assert isinstance(imgs, list)
         return [self.extract_feat(img) for img in imgs]
 
-    def forward_train(self, imgs, img_metas, **kwargs):
+    def forward_train(self, imgs, img_metas=None, **kwargs):
         """
         Args:
             img (list[Tensor]): List of tensors of shape (1, C, H, W).
@@ -131,6 +131,9 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
                 augs (multiscale, flip, etc.) and the inner list indicates
                 images in a batch.
         """
+
+        return self.simple_test(imgs[0], img_metas=img_metas[0], **kwargs)
+
         for var, name in [(imgs, 'imgs'), (img_metas, 'img_metas')]:
             if not isinstance(var, list):
                 raise TypeError(f'{name} must be a list, but got {type(var)}')
@@ -146,7 +149,8 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
         for img, img_meta in zip(imgs, img_metas):
             batch_size = len(img_meta)
             for img_id in range(batch_size):
-                img_meta[img_id]['batch_input_shape'] = tuple(img.size()[-2:])
+                img_sz = img.size()[-2:]
+                img_meta[img_id]['batch_input_shape'] = tuple(img_sz)
 
         if num_augs == 1:
             # proposals (List[List[Tensor]]): the outer list indicates
