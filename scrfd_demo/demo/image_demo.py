@@ -29,14 +29,13 @@ def inference_detector(model, img):
     # prepare data from image: ndarray
     # data = dict(img=img)
 
-
-    data = dict(img=[torch.from_numpy(img)])
-    data['img_metas'] = [{'filename': None,
-                          'ori_shape': (360, 640, 3),
-                          'img_shape': (360, 640, 3),
-                          'pad_shape': (640, 640, 3),
-                          'scale_factor': np.array([1., 1., 1., 1.], dtype=np.float32),
-                          'batch_input_shape': (640, 640)}]
+    data = dict(img=[torch.from_numpy(img).to(device)])
+    data['img_metas'] = [[{'filename': None,
+                           'ori_shape': (360, 640, 3),
+                           'img_shape': (360, 640, 3),
+                           'pad_shape': (640, 640, 3),
+                           'scale_factor': np.array([1., 1., 1., 1.], dtype=np.float32),
+                           'batch_input_shape': (640, 640)}]]
 
     cfg.data.test.pipeline[0].type = 'LoadImageFromWebcam'
 

@@ -660,7 +660,7 @@ class SCRFDHead(AnchorHead):
                    cls_scores,
                    bbox_preds,
                    kps_preds,
-                   img_metas,
+                   img_metas: list[dict],
                    cfg=None,
                    rescale=False,
                    with_nms=True):
@@ -719,8 +719,7 @@ class SCRFDHead(AnchorHead):
 
         device = cls_scores[0].device
         featmap_sizes = [cls_scores[i].shape[-2:] for i in range(num_levels)]
-        mlvl_anchors = self.anchor_generator.grid_anchors(
-            featmap_sizes, device=device)
+        mlvl_anchors = self.anchor_generator.grid_anchors(featmap_sizes, device=device)
 
         result_list = []
         n = len(img_metas)
@@ -893,7 +892,6 @@ class SCRFDHead(AnchorHead):
         score_lst = []
         kp_lst = []
 
-
         for cls_score, bbox_pred, kps_pred, stride, anchors in zip(
                 cls_scores, bbox_preds, kps_preds, self.anchor_generator.strides,
                 mlvl_anchors):
@@ -940,7 +938,7 @@ class SCRFDHead(AnchorHead):
                 # print("kps_pred shape after reshape:", kps_pred.shape)
 
                 # Debug 2
-                kps_pred = kps_pred.permute(1, 2, 0).reshape((-1, self.NK * 2)) * stride[0] ## it's working
+                kps_pred = kps_pred.permute(1, 2, 0).reshape((-1, self.NK * 2)) * stride[0]  ## it's working
                 # kps_targets = kps_targets.reshape((-1, self.NK * 2))
                 # kps_weights = kps_weights.reshape((-1, self.NK * 2))
 
@@ -964,8 +962,6 @@ class SCRFDHead(AnchorHead):
             kp = kpss.detach().cpu().numpy()
 
             pos_index = np.where(sc >= 0.5)[0]
-
-
 
             mlvl_bboxes.append(bboxes)
             mlvl_scores.append(scores)

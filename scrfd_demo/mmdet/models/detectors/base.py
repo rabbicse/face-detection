@@ -132,7 +132,7 @@ class BaseDetector(nn.Module, metaclass=ABCMeta):
                 images in a batch.
         """
 
-        return self.simple_test(imgs[0], img_metas=img_metas[0], **kwargs)
+        # return self.simple_test(imgs[0], img_metas=img_metas[0], **kwargs)
 
         for var, name in [(imgs, 'imgs'), (img_metas, 'img_metas')]:
             if not isinstance(var, list):
