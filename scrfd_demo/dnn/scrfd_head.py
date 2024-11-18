@@ -2,29 +2,50 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mmcv.cnn import ConvModule, Scale, bias_init_with_prob, normal_init, DepthwiseSeparableConvModule
-from mmcv.cnn import constant_init, kaiming_init
-from mmcv.runner import force_fp32
+from mmcv.cnn import normal_init, ConvModule, DepthwiseSeparableConvModule
+
+# from mmcv.cnn import ConvModule, Scale, normal_init, DepthwiseSeparableConvModule
+# from mmcv.cnn import constant_init
+# from mmcv.runner import force_fp32
 
 from dnn.anchor_head import AnchorHead
 from mmdet.core import (anchor_inside_flags, bbox2distance, bbox_overlaps,
-                        build_assigner, build_sampler, distance2bbox, distance2kps, kps2distance,
+                        distance2bbox, distance2kps, kps2distance,
                         images_to_levels, multi_apply, multiclass_nms,
                         reduce_mean, unmap)
 
 
-# from ..builder import HEADS, build_loss
-# from .anchor_head import AnchorHead
-# from .base_dense_head import BaseDenseHead
-# from .dense_test_mixins import BBoxTestMixin
+# def last_zero_init(m):
+#     if isinstance(m, nn.Sequential):
+#         constant_init(m[-1], val=0)
+#     else:
+#         constant_init(m, val=0)
 
+def normal_init(module: nn.Module,
+                mean: float = 0,
+                std: float = 1,
+                bias: float = 0) -> None:
+    if hasattr(module, 'weight') and module.weight is not None:
+        nn.init.normal_(module.weight, mean, std)
+    if hasattr(module, 'bias') and module.bias is not None:
+        nn.init.constant_(module.bias, bias)
 
-def last_zero_init(m):
-    if isinstance(m, nn.Sequential):
-        constant_init(m[-1], val=0)
-    else:
-        constant_init(m, val=0)
+class Scale(nn.Module):
+    """A learnable scale parameter.
 
+    This layer scales the input by a learnable factor. It multiplies a
+    learnable scale parameter of shape (1,) with input of any shape.
+
+    Args:
+        scale (float): Initial value of scale factor. Default: 1.0
+    """
+
+    def __init__(self, scale: float = 1.0):
+        super().__init__()
+        self.scale = nn.Parameter(torch.tensor(scale, dtype=torch.float))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * self.scale
 
 class Integral(nn.Module):
     """A fixed layer for calculating integral result from distribution.
@@ -109,7 +130,6 @@ class SCRFDHead(AnchorHead):
                  dw_conv=False,
                  use_kps=False,
                  loss_kps=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=0.1),
-                 # loss_kps=dict(type='SmoothL1Loss', beta=1.0, loss_weight=0.3),
                  **kwargs):
         self.stacked_convs = stacked_convs
         self.feat_mults = feat_mults
@@ -399,15 +419,13 @@ class SCRFDHead(AnchorHead):
 
         # since feature map sizes of all images are the same, we only compute
         # anchors for one time
-        multi_level_anchors = self.anchor_generator.grid_anchors(
-            featmap_sizes, device)
+        multi_level_anchors = self.anchor_generator.grid_anchors(featmap_sizes, device)
         anchor_list = [multi_level_anchors for _ in range(num_imgs)]
 
         # for each image, we compute valid flags of multi level anchors
         valid_flag_list = []
         for img_id, img_meta in enumerate(img_metas):
-            multi_level_flags = self.anchor_generator.valid_flags(
-                featmap_sizes, img_meta['pad_shape'], device)
+            multi_level_flags = self.anchor_generator.valid_flags(featmap_sizes, img_meta['pad_shape'], device)
             valid_flag_list.append(multi_level_flags)
 
         return anchor_list, valid_flag_list
@@ -567,7 +585,6 @@ class SCRFDHead(AnchorHead):
 
         return loss_cls, loss_bbox, loss_dfl, loss_kps, weight_targets.sum()
 
-    @force_fp32(apply_to=('cls_scores', 'bbox_preds'))
     def loss(self,
              cls_scores,
              bbox_preds,
@@ -760,6 +777,7 @@ class SCRFDHead(AnchorHead):
         """Transform network output for a batch into bbox predictions.
 
         Args:
+            kps_preds:
             cls_scores (list[Tensor]): Box scores for each scale level
                 Has shape (N, num_anchors * num_classes, H, W)
             bbox_preds (list[Tensor]): Box energies / deltas for each scale

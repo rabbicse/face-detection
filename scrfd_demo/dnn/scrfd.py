@@ -1,18 +1,29 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from torch import Tensor
+
 from dnn.single_stage import SingleStageDetector
 
 
 class SCRFD(SingleStageDetector):
 
     def __init__(self,
-                 backbone:nn.Module,
-                 neck:nn.Module,
-                 bbox_head:nn.Module,
-                 train_cfg=None,
-                 test_cfg=None,
+                 backbone: nn.Module,
+                 neck: nn.Module,
+                 bbox_head: nn.Module,
+                 train_cfg: dict = None,
+                 test_cfg: dict = None,
                  pretrained=None):
+        """
+        Args:
+            backbone:
+            neck:
+            bbox_head:
+            train_cfg:
+            test_cfg:
+            pretrained:
+        """
         super(SCRFD, self).__init__(backbone, neck, bbox_head, train_cfg, test_cfg, pretrained)
         self.use_kps = True
         self.nms_thresh = 0.4
@@ -48,6 +59,49 @@ class SCRFD(SingleStageDetector):
                                               gt_labels, gt_keypointss, gt_bboxes_ignore)
         return losses
 
+    def extract(self, img: Tensor, img_metas: list[dict], rescale=False) -> list[np.ndarray]:
+        """Test function without test time augmentation.
+
+        Args:
+            img: torch.Tensor: Image
+            img_metas (list[dict]): List of image information.
+            rescale (bool, optional): Whether to rescale the results.
+                Defaults to False.
+
+        Returns:
+            list[list[np.ndarray]]: BBox results of each image and classes.
+                The outer list corresponds to each image. The inner list
+                corresponds to each class.
+        """
+        x = self.extract_feat(img)
+        outs = self.bbox_head(x)
+
+        ## det scale
+        im_ratio = float(img.shape[-1]) / img.shape[-2]
+        model_ratio = 1.0
+        if im_ratio > model_ratio:
+            new_height = 640
+            new_width = int(new_height / im_ratio)
+        else:
+            new_width = 640
+            new_height = int(new_width * im_ratio)
+        det_scale = float(new_height) / img.shape[-1]
+
+        # Unpack the output
+        # cls_score, bbox_pred, kps_pred = outs if self.bbox_head.use_kps else (*outs, None)
+
+        # Generate bounding boxes
+        bbox_list = self.bbox_head.get_bboxes(*outs, img_metas, rescale=rescale)
+
+        mlvl_bboxes, mlvl_scores, mlvl_keypoints, score_lst, bbox_lst, kp_lst = bbox_list[0]
+        b, l = self.post_process(score_lst, bbox_lst, kp_lst, det_scale, img)
+        # print(res)
+        bbox_data = {
+            'bbox': b,
+            'keypoints': l
+        }
+        return [bbox_data]
+
     def simple_test(self, img, img_metas: list[dict], rescale=False):
         """Test function without test time augmentation.
 
@@ -80,8 +134,7 @@ class SCRFD(SingleStageDetector):
         cls_score, bbox_pred, kps_pred = outs if self.bbox_head.use_kps else (*outs, None)
 
         # Generate bounding boxes
-        bbox_list = self.bbox_head.get_bboxes(
-            *outs, img_metas, rescale=rescale)
+        bbox_list = self.bbox_head.get_bboxes(*outs, img_metas, rescale=rescale)
 
         mlvl_bboxes, mlvl_scores, mlvl_keypoints, score_lst, bbox_lst, kp_lst = bbox_list[0]
         b, l = self.post_process(score_lst, bbox_lst, kp_lst, det_scale, img)
@@ -91,7 +144,6 @@ class SCRFD(SingleStageDetector):
             'keypoints': l
         }
         return [bbox_data]
-
 
     def feature_test(self, img):
         x = self.extract_feat(img)

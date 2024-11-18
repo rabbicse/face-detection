@@ -4,10 +4,10 @@ from mmcv.cnn import normal_init
 from mmcv.runner import force_fp32
 
 from mmdet.core import (anchor_inside_flags, build_anchor_generator,
-                        build_assigner, build_bbox_coder, build_sampler,
-                        images_to_levels, multi_apply, multiclass_nms, unmap)
-from .builder import HEADS, build_loss
+                        build_bbox_coder, images_to_levels, multi_apply, multiclass_nms, unmap)
 from .base_dense_head import BaseDenseHead
+
+
 # from .dense_test_mixins import BBoxTestMixin
 
 
@@ -417,7 +417,6 @@ class AnchorHead(BaseDenseHead):
             avg_factor=num_total_samples)
         return loss_cls, loss_bbox
 
-    @force_fp32(apply_to=('cls_scores', 'bbox_preds'))
     def loss(self,
              cls_scores,
              bbox_preds,
@@ -487,10 +486,11 @@ class AnchorHead(BaseDenseHead):
             num_total_samples=num_total_samples)
         return dict(loss_cls=losses_cls, loss_bbox=losses_bbox)
 
-    @force_fp32(apply_to=('cls_scores', 'bbox_preds'))
+
     def get_bboxes(self,
                    cls_scores,
                    bbox_preds,
+                   kps_preds,
                    img_metas,
                    cfg=None,
                    rescale=False,

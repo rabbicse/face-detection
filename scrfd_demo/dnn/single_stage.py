@@ -1,9 +1,9 @@
+from abc import abstractmethod
+
 import torch
 import torch.nn as nn
 
 from dnn.base import BaseDetector
-from mmdet.core import bbox2result
-
 
 
 class SingleStageDetector(BaseDetector):
@@ -14,9 +14,9 @@ class SingleStageDetector(BaseDetector):
     """
 
     def __init__(self,
-                 backbone:nn.Module,
-                 neck:nn.Module=None,
-                 bbox_head:nn.Module=None,
+                 backbone: nn.Module,
+                 neck: nn.Module = None,
+                 bbox_head: nn.Module = None,
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None):
@@ -27,8 +27,8 @@ class SingleStageDetector(BaseDetector):
         # bbox_head.update(train_cfg=train_cfg)
         # bbox_head.update(test_cfg=test_cfg)
         self.bbox_head = bbox_head
-        self.train_cfg = train_cfg
-        self.test_cfg = test_cfg
+        # self.train_cfg = train_cfg
+        # self.test_cfg = test_cfg
         self.init_weights(pretrained=pretrained)
 
     def init_weights(self, pretrained=None):
@@ -48,7 +48,7 @@ class SingleStageDetector(BaseDetector):
                 self.neck.init_weights()
         self.bbox_head.init_weights()
 
-    def extract_feat(self, img):
+    def extract_feat(self, img: torch.Tensor):
         """Directly extract features from the backbone+neck."""
         x = self.backbone(img)
         if self.with_neck:
@@ -94,10 +94,12 @@ class SingleStageDetector(BaseDetector):
                                               gt_labels, gt_bboxes_ignore)
         return losses
 
-    def simple_test(self, img, img_metas, rescale=False):
+    @abstractmethod
+    def simple_test(self, img: torch.Tensor, img_metas: list[dict], rescale=False):
         """Test function without test time augmentation.
 
         Args:
+            img:
             imgs (list[torch.Tensor]): List of multiple images
             img_metas (list[dict]): List of image information.
             rescale (bool, optional): Whether to rescale the results.
@@ -108,30 +110,25 @@ class SingleStageDetector(BaseDetector):
                 The outer list corresponds to each image. The inner list
                 corresponds to each class.
         """
-        x = self.extract_feat(img)
-        outs = self.bbox_head(x)
-        #print(len(outs))
-        if torch.onnx.is_in_onnx_export():
-            print('single_stage.py in-onnx-export')
-            print(outs.__class__)
-            cls_score, bbox_pred = outs
-            for c in cls_score:
-                print(c.shape)
-            for c in bbox_pred:
-                print(c.shape)
-            #print(outs[0].shape, outs[1].shape)
-            return outs
-        bbox_list = self.bbox_head.get_bboxes(
-            *outs, img_metas, rescale=rescale)
-        # skip post-processing when exporting to ONNX
-        if torch.onnx.is_in_onnx_export():
-            return bbox_list
+        pass
 
-        bbox_results = [
-            bbox2result(det_bboxes, det_labels, self.bbox_head.num_classes)
-            for det_bboxes, det_labels in bbox_list
-        ]
-        return bbox_results
+    @abstractmethod
+    def extract(self, img: torch.Tensor, img_metas: list[dict], rescale=False):
+        """Test function without test time augmentation.
+
+        Args:
+            img:
+            imgs (list[torch.Tensor]): List of multiple images
+            img_metas (list[dict]): List of image information.
+            rescale (bool, optional): Whether to rescale the results.
+                Defaults to False.
+
+        Returns:
+            list[list[np.ndarray]]: BBox results of each image and classes.
+                The outer list corresponds to each image. The inner list
+                corresponds to each class.
+        """
+        pass
 
     def aug_test(self, imgs, img_metas, rescale=False):
         """Test function with test time augmentation.
