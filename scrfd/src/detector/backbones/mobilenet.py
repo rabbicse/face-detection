@@ -1,11 +1,9 @@
-import re
 from collections import OrderedDict
-
+from torch.nn.modules.batchnorm import _BatchNorm
+from detector.utils.utils import kaiming_init, constant_init
 import torch
 import torch.nn as nn
-from torch.nn.modules.batchnorm import _BatchNorm
-
-from detector.utils.utils import kaiming_init, constant_init
+import re
 
 
 class MobileNetV1(nn.Module):
@@ -62,35 +60,6 @@ class MobileNetV1(nn.Module):
             layer_name = f'layer{i + 1}'
             self.add_module(layer_name, _block)
             self.stage_layers.append(layer_name)
-
-        # bc = base_channels
-        # self.stages = nn.ModuleDict()
-        # self.stage0 = nn.Sequential(
-        #    conv_bn(3, bc, 2),
-        #    conv_dw(bc, bc*2, 1),
-        #    conv_dw(bc*2, bc*4, 2),
-        #    conv_dw(bc*4, bc*4, 1),
-        # )
-        # self.stage1 = nn.Sequential(
-        #    conv_dw(bc*4, bc*8, 2),
-        #    conv_dw(bc*8, bc*8, 1),
-
-        #    conv_dw(bc*8, bc*8, 1),
-        #    conv_dw(bc*8, bc*8, 1),
-        # )
-        # self.stage2 = nn.Sequential(
-        #    conv_dw(bc*8, bc*16, 2),
-        #    conv_dw(bc*16, bc*16, 1),
-        #    conv_dw(bc*16, bc*16, 1),
-        #    conv_dw(bc*16, bc*16, 1),
-        #    #conv_dw(bc*16, bc*16, 1),
-        #    #conv_dw(bc*16, bc*16, 1),
-        # )
-        # self.stage3 = nn.Sequential(
-        #    conv_dw(bc*16, bc*32, 2),
-        #    conv_dw(bc*32, bc*32, 1),
-        # )
-        # self.stages = [self.stage0, self.stage1, self.stage2, self.stage3]
 
     def forward(self, x):
         output = []

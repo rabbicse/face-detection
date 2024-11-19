@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from detector.dnn.single_stage import SingleStageDetector
+from detector.utils.transforms import nms
 
 
 class SCRFD(SingleStageDetector):
@@ -14,7 +15,9 @@ class SCRFD(SingleStageDetector):
                  bbox_head: nn.Module,
                  train_cfg: dict = None,
                  test_cfg: dict = None,
-                 pretrained=None):
+                 pretrained=None,
+                 use_kps: bool = True,
+                 nms_thresh: float = 0.4):
         """
         Args:
             backbone:
@@ -25,8 +28,8 @@ class SCRFD(SingleStageDetector):
             pretrained:
         """
         super(SCRFD, self).__init__(backbone, neck, bbox_head, train_cfg, test_cfg, pretrained)
-        self.use_kps = True
-        self.nms_thresh = 0.4
+        self.use_kps = use_kps
+        self.nms_thresh = nms_thresh
 
     def forward_train(self,
                       img,
@@ -76,25 +79,15 @@ class SCRFD(SingleStageDetector):
         x = self.extract_feat(img)
         outs = self.bbox_head(x)
 
-        ## det scale
-        im_ratio = float(img.shape[-1]) / img.shape[-2]
-        model_ratio = 1.0
-        if im_ratio > model_ratio:
-            new_height = 640
-            new_width = int(new_height / im_ratio)
-        else:
-            new_width = 640
-            new_height = int(new_width * im_ratio)
-        det_scale = float(new_height) / img.shape[-1]
-
-        # Unpack the output
-        # cls_score, bbox_pred, kps_pred = outs if self.bbox_head.use_kps else (*outs, None)
-
         # Generate bounding boxes
         bbox_list = self.bbox_head.get_bboxes(*outs, img_metas, rescale=rescale)
 
-        mlvl_bboxes, mlvl_scores, mlvl_keypoints, score_lst, bbox_lst, kp_lst = bbox_list[0]
-        b, l = self.post_process(score_lst, bbox_lst, kp_lst, det_scale, img)
+        # return bbox_list[0]
+        # det_scale = img_metas[0]['det_scale']
+
+        score_lst, bbox_lst, kp_lst = bbox_list[0]
+
+        b, l = self.post_process(score_lst, bbox_lst, kp_lst, img)
         # print(res)
         bbox_data = {
             'bbox': b,
@@ -137,7 +130,7 @@ class SCRFD(SingleStageDetector):
         bbox_list = self.bbox_head.get_bboxes(*outs, img_metas, rescale=rescale)
 
         mlvl_bboxes, mlvl_scores, mlvl_keypoints, score_lst, bbox_lst, kp_lst = bbox_list[0]
-        b, l = self.post_process(score_lst, bbox_lst, kp_lst, det_scale, img)
+        b, l = self.post_process(score_lst, bbox_lst, kp_lst, img)
         # print(res)
         bbox_data = {
             'bbox': b,
@@ -150,16 +143,16 @@ class SCRFD(SingleStageDetector):
         outs = self.bbox_head(x)
         return outs
 
-    def post_process(self, scores_list, bboxes_list, kps_list, det_scale, image, max_num=0, metric='default'):
+    def post_process(self, scores_list, bboxes_list, kps_list, image, max_num=0, metric='default'):
         scores = np.vstack(scores_list)
         scores_ravel = scores.ravel()
         order = scores_ravel.argsort()[::-1]
-        bboxes = np.vstack(bboxes_list) / det_scale
+        bboxes = np.vstack(bboxes_list)
         if self.use_kps:
-            kpss = np.vstack(kps_list) / det_scale
+            kpss = np.vstack(kps_list)
         pre_det = np.hstack((bboxes, scores)).astype(np.float32, copy=False)
         pre_det = pre_det[order, :]
-        keep = self.nms(pre_det)
+        keep = nms(pre_det)
         det = pre_det[keep, :]
         if self.use_kps:
             kpss = kpss[order, :, :]
@@ -184,33 +177,3 @@ class SCRFD(SingleStageDetector):
             if kpss is not None:
                 kpss = kpss[bindex, :]
         return det, kpss
-
-    def nms(self, dets):
-        thresh = self.nms_thresh
-        x1 = dets[:, 0]
-        y1 = dets[:, 1]
-        x2 = dets[:, 2]
-        y2 = dets[:, 3]
-        scores = dets[:, 4]
-
-        areas = (x2 - x1 + 1) * (y2 - y1 + 1)
-        order = scores.argsort()[::-1]
-
-        keep = []
-        while order.size > 0:
-            i = order[0]
-            keep.append(i)
-            xx1 = np.maximum(x1[i], x1[order[1:]])
-            yy1 = np.maximum(y1[i], y1[order[1:]])
-            xx2 = np.minimum(x2[i], x2[order[1:]])
-            yy2 = np.minimum(y2[i], y2[order[1:]])
-
-            w = np.maximum(0.0, xx2 - xx1 + 1)
-            h = np.maximum(0.0, yy2 - yy1 + 1)
-            inter = w * h
-            ovr = inter / (areas[i] + areas[order[1:]] - inter)
-
-            index = np.where(ovr <= thresh)[0]
-            order = order[index + 1]
-
-        return keep

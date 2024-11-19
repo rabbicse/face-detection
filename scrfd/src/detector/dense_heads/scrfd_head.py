@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 from detector.dense_heads.anchor_head import AnchorHead
 from detector.dnn_modules.conv_module import ConvModule
 from detector.dnn_modules.depthwise_separable_conv_module import DepthwiseSeparableConvModule
@@ -34,6 +33,7 @@ class Scale(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return x * self.scale
+
 
 class Integral(nn.Module):
     """A fixed layer for calculating integral result from distribution.
@@ -947,7 +947,7 @@ class SCRFDHead(AnchorHead):
             bbox_lst.append(bbx[pos_index])
             kp_lst.append(kp[pos_index])
 
-        return mlvl_bboxes, mlvl_scores, mlvl_keypoints, score_lst, bbox_lst, kp_lst
+        return score_lst, bbox_lst, kp_lst
 
     def _get_bboxes_single(self,
                            cls_scores,

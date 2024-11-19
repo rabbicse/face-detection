@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import cv2
 import numpy as np
 import torch
@@ -7,23 +9,22 @@ from detector.backbones.mobilenet import MobileNetV1
 from detector.dense_heads.scrfd_head import SCRFDHead
 from detector.dnn.scrfd import SCRFD
 from detector.necks.pafpn import PAFPN
+from detector.utils.transforms import nms
 
 
 class FaceDetector:
-    def __init__(self, model_path: str = None, device: torch.device = torch.device('cpu')):
+    def __init__(self,
+                 model_path: str = None,
+                 device: torch.device = torch.device('cpu'),
+                 model_size: Tuple[int, int] = (640, 640)):
+        self.model_width = model_size[0]
+        self.model_height = model_size[1]
+        self.model_ratio = float(model_size[1] / model_size[0])
         self.model_path: str = model_path
         self.device: torch.device = device
         self.model: nn.Module = self.init_detector()
 
     def init_detector(self):
-        """
-        Args:
-            model_path:
-            device:
-
-        Returns:
-
-        """
         if self.model_path is not None:
             # construct backbone
             backbone = MobileNetV1(block_cfg=dict(stage_blocks=(2, 3, 2, 6),
@@ -33,7 +34,6 @@ class FaceDetector:
             neck = PAFPN(in_channels=[40, 72, 152, 288],
                          out_channels=16,
                          start_level=1,
-                         add_extra_convs='on_output',
                          num_outs=3)
 
             # construct bbox head
@@ -47,7 +47,6 @@ class FaceDetector:
                                   dw_conv=True,
                                   scale_mode=0,
                                   anchor_generator=dict(
-                                      type='AnchorGenerator',
                                       ratios=[1.0],
                                       scales=[1, 2],
                                       base_sizes=[16, 64, 256],
@@ -92,7 +91,6 @@ class FaceDetector:
             state_dict = checkpoint.get('state_dict', checkpoint)  # Adjust if state_dict is nested
             model.load_state_dict(state_dict, strict=False)  # Use strict=False to ignore non-matching keys
 
-            # checkpoint = load_checkpoint(model, model_path, map_location=map_loc)
             if 'CLASSES' in checkpoint['meta']:
                 model.CLASSES = checkpoint['meta']['CLASSES']
 
@@ -101,36 +99,64 @@ class FaceDetector:
             model.eval()
             return model
 
-    def __pre_process(self, img):
-        im_ratio = float(img.shape[0]) / img.shape[1]
-        model_ratio = 1.0
-        if im_ratio > model_ratio:
-            new_height = 640
+    def __pre_process(self, img: np.ndarray):
+        height, width, channels = img.shape
+        im_ratio = float(height / width)
+
+        if im_ratio > self.model_ratio:
+            new_height = self.model_height
             new_width = int(new_height / im_ratio)
         else:
-            new_width = 640
+            new_width = self.model_width
             new_height = int(new_width * im_ratio)
+
+        det_scale = float(new_height / img.shape[0])
         resized_img = cv2.resize(img, (new_width, new_height))
 
-        det_img = np.zeros((640, 640, 3), dtype=np.uint8)
+        det_img = np.zeros((self.model_width, self.model_height, 3), dtype=np.uint8)
         det_img[:new_height, :new_width, :] = resized_img
 
         input_size = tuple(det_img.shape[0:2][::-1])
-        return resized_img, cv2.dnn.blobFromImage(det_img, 1.0 / 128, input_size, (127.5, 127.5, 127.5), swapRB=True)
+        return det_scale, resized_img, cv2.dnn.blobFromImage(det_img, 1.0 / 128, input_size, (127.5, 127.5, 127.5), swapRB=True)
 
-    def detect(self, img):
+    def detect(self, img: np.ndarray):
         # preprocess image
-        resized_img, blob = self.__pre_process(img)
+        det_scale, resized_img, blob = self.__pre_process(img)
 
         # generate input to pass to dnn
         data = dict(img=[torch.from_numpy(blob).to(self.device)])
-        data['img_metas'] = [[{'ori_shape': (360, 640, 3),
-                               'img_shape': (360, 640, 3),
-                               'pad_shape': (640, 640, 3),
+        data['img_metas'] = [[{'ori_shape': (resized_img.shape[0], resized_img.shape[1], 3),
+                               'img_shape': (resized_img.shape[0], resized_img.shape[1], 3),
+                               'pad_shape': (self.model_width, self.model_height, 3),
                                'scale_factor': np.array([1., 1., 1., 1.], dtype=np.float32),
-                               'batch_input_shape': (640, 640)}]]
+                               'batch_input_shape': (self.model_width, self.model_height),
+                               'det_scale': det_scale}]]
 
         # forward the model
         with torch.no_grad():
             result = self.model(return_loss=False, rescale=True, **data)[0]
+
+        self.extract_coordinates(result, (resized_img.shape[1], resized_img.shape[0]))
         return resized_img, result
+
+    def extract_coordinates(self, result, img_shape=(640, 640)):
+        bbox_list = []
+        bboxes = result['bbox']
+        kps = result['keypoints']
+
+        for i in range(len(bboxes)):
+            bbox = bboxes[i]
+
+            # parse bbox
+            x_min, y_min, x_max, y_max, _ = bbox
+            x_min /= img_shape[0]
+            y_min /= img_shape[1]
+            x_max /= img_shape[0]
+            y_max /= img_shape[1]
+
+            # parse keypoints
+            kp = kps[i]
+
+            # total 5 keypoints
+            for j in range(5):
+                x, y = kp[j]
