@@ -117,7 +117,8 @@ class FaceDetector:
         det_img[:new_height, :new_width, :] = resized_img
 
         input_size = tuple(det_img.shape[0:2][::-1])
-        return det_scale, resized_img, cv2.dnn.blobFromImage(det_img, 1.0 / 128, input_size, (127.5, 127.5, 127.5), swapRB=True)
+        return det_scale, resized_img, cv2.dnn.blobFromImage(det_img, 1.0 / 128, input_size, (127.5, 127.5, 127.5),
+                                                             swapRB=True)
 
     def detect(self, img: np.ndarray):
         # preprocess image
@@ -136,27 +137,48 @@ class FaceDetector:
         with torch.no_grad():
             result = self.model(return_loss=False, rescale=True, **data)[0]
 
-        self.extract_coordinates(result, (resized_img.shape[1], resized_img.shape[0]))
-        return resized_img, result
+        return resized_img, self.extract_coordinates(result, (resized_img.shape[1], resized_img.shape[0]))
 
     def extract_coordinates(self, result, img_shape=(640, 640)):
-        bbox_list = []
+        detections = []
         bboxes = result['bbox']
         kps = result['keypoints']
 
         for i in range(len(bboxes)):
-            bbox = bboxes[i]
-
             # parse bbox
-            x_min, y_min, x_max, y_max, _ = bbox
+            bbox_raw = bboxes[i]
+            x_min, y_min, x_max, y_max, _ = bbox_raw
             x_min /= img_shape[0]
             y_min /= img_shape[1]
             x_max /= img_shape[0]
             y_max /= img_shape[1]
 
+            bbox = {
+                'x_min': x_min,
+                'y_min': y_min,
+                'x_max': x_max,
+                'y_max': y_max
+            }
+
             # parse keypoints
-            kp = kps[i]
+            kps_raw = kps[i]
+            landmarks = []
 
             # total 5 keypoints
             for j in range(5):
-                x, y = kp[j]
+                x, y = kps_raw[j]
+                x /= img_shape[0]
+                y /= img_shape[1]
+
+                key_point = {
+                    'x': x,
+                    'y': y
+                }
+                landmarks.append(key_point)
+
+            detections.append({
+                'bbox': bbox,
+                'landmarks': landmarks
+            })
+
+        return detections
