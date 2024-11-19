@@ -2,22 +2,38 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mmdet.core import (anchor_inside_flags, bbox2distance, bbox_overlaps,
-                        build_assigner, build_sampler, distance2bbox, distance2kps, kps2distance,
-                        images_to_levels, multi_apply, multiclass_nms,
-                        reduce_mean, unmap)
-from ..builder import HEADS, build_loss
-from .anchor_head import AnchorHead
-from .base_dense_head import BaseDenseHead
-from .dense_test_mixins import BBoxTestMixin
 
 
-def last_zero_init(m):
-    if isinstance(m, nn.Sequential):
-        constant_init(m[-1], val=0)
-    else:
-        constant_init(m, val=0)
+from detector.dense_heads.anchor_head import AnchorHead
+from detector.dnn_modules.conv_module import ConvModule
+from detector.dnn_modules.depthwise_separable_conv_module import DepthwiseSeparableConvModule
+from detector.utils.bbox_nms import multiclass_nms
+from detector.utils.iou2d_calculator import bbox_overlaps
+from detector.utils.transforms import distance2bbox, kps2distance, bbox2distance, distance2kps
+from detector.utils.utils import normal_init, multi_apply, unmap, reduce_mean, images_to_levels, anchor_inside_flags
 
+
+# from mmdet.core import (anchor_inside_flags, bbox2distance, bbox_overlaps,
+#                         build_assigner, build_sampler, distance2bbox, distance2kps, kps2distance,
+#                         images_to_levels, multi_apply, multiclass_nms,
+#                         reduce_mean, unmap)
+
+class Scale(nn.Module):
+    """A learnable scale parameter.
+
+    This layer scales the input by a learnable factor. It multiplies a
+    learnable scale parameter of shape (1,) with input of any shape.
+
+    Args:
+        scale (float): Initial value of scale factor. Default: 1.0
+    """
+
+    def __init__(self, scale: float = 1.0):
+        super().__init__()
+        self.scale = nn.Parameter(torch.tensor(scale, dtype=torch.float))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * self.scale
 
 class Integral(nn.Module):
     """A fixed layer for calculating integral result from distribution.
@@ -98,11 +114,10 @@ class SCRFDHead(AnchorHead):
                  reg_max=8,
                  cls_reg_share=False,
                  strides_share=True,
-                 scale_mode = 1,
-                 dw_conv = False,
-                 use_kps = False,
+                 scale_mode=1,
+                 dw_conv=False,
+                 use_kps=False,
                  loss_kps=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=0.1),
-                 #loss_kps=dict(type='SmoothL1Loss', beta=1.0, loss_weight=0.3),
                  **kwargs):
         self.stacked_convs = stacked_convs
         self.feat_mults = feat_mults
@@ -120,25 +135,25 @@ class SCRFDHead(AnchorHead):
             self.use_dfl = False
         self.use_scale = False
         self.use_kps = use_kps
-        if self.scale_mode>0 and (self.strides_share or self.scale_mode==2):
+        if self.scale_mode > 0 and (self.strides_share or self.scale_mode == 2):
             self.use_scale = True
-        #print('USE-SCALE:', self.use_scale)
+        # print('USE-SCALE:', self.use_scale)
         super(SCRFDHead, self).__init__(num_classes, in_channels, **kwargs)
 
         self.sampling = False
-        if self.train_cfg:
-            self.assigner = build_assigner(self.train_cfg.assigner)
-            # SSD sampling=False so use PseudoSampler
-            sampler_cfg = dict(type='PseudoSampler')
-            self.sampler = build_sampler(sampler_cfg, context=self)
+        # if self.train_cfg:
+        #     self.assigner = build_assigner(self.train_cfg.assigner)
+        #     # SSD sampling=False so use PseudoSampler
+        #     sampler_cfg = dict(type='PseudoSampler')
+        #     self.sampler = build_sampler(sampler_cfg, context=self)
 
         self.integral = Integral(self.reg_max)
-        if self.use_dfl:
-            self.loss_dfl = build_loss(loss_dfl)
-        #print('USE_DFL:', self.use_dfl)
-        self.loss_kps = build_loss(loss_kps)
+        # if self.use_dfl:
+        #     self.loss_dfl = build_loss(loss_dfl)
+        # print('USE_DFL:', self.use_dfl)
+        # self.loss_kps = build_loss(loss_kps)
         self.loss_kps_std = 1.0
-        #print(self.bbox_coder.__class__)
+        # print(self.bbox_coder.__class__)
         self.train_step = 0
         self.pos_count = {}
         self.gtgroup_count = {}
@@ -148,22 +163,22 @@ class SCRFDHead(AnchorHead):
     def _get_conv_module(self, in_channel, out_channel):
         if not self.dw_conv:
             conv = ConvModule(
-                    in_channel,
-                    out_channel,
-                    3,
-                    stride=1,
-                    padding=1,
-                    conv_cfg=self.conv_cfg,
-                    norm_cfg=self.norm_cfg)
+                in_channel,
+                out_channel,
+                3,
+                stride=1,
+                padding=1,
+                conv_cfg=self.conv_cfg,
+                norm_cfg=self.norm_cfg)
         else:
             conv = DepthwiseSeparableConvModule(
-                    in_channel,
-                    out_channel,
-                    3,
-                    stride=1,
-                    padding=1,
-                    pw_norm_cfg=self.norm_cfg,
-                    dw_norm_cfg=self.norm_cfg)
+                in_channel,
+                out_channel,
+                3,
+                stride=1,
+                padding=1,
+                pw_norm_cfg=self.norm_cfg,
+                dw_norm_cfg=self.norm_cfg)
         return conv
 
     def _init_layers(self):
@@ -177,18 +192,19 @@ class SCRFDHead(AnchorHead):
         if self.use_kps:
             self.stride_kps = nn.ModuleDict()
         for stride_idx, conv_stride in enumerate(conv_strides):
-            #print('create convs for stride:', conv_stride)
+            # print('create convs for stride:', conv_stride)
             key = str(conv_stride)
             cls_convs = nn.ModuleList()
             reg_convs = nn.ModuleList()
-            stacked_convs = self.stacked_convs[stride_idx] if isinstance(self.stacked_convs, (list, tuple)) else self.stacked_convs
+            stacked_convs = self.stacked_convs[stride_idx] if isinstance(self.stacked_convs,
+                                                                         (list, tuple)) else self.stacked_convs
             feat_mult = self.feat_mults[stride_idx] if self.feat_mults is not None else 1
-            feat_ch = int(self.feat_channels*feat_mult)
+            feat_ch = int(self.feat_channels * feat_mult)
             for i in range(stacked_convs):
                 chn = self.in_channels if i == 0 else last_feat_ch
-                cls_convs.append( self._get_conv_module(chn, feat_ch) )
+                cls_convs.append(self._get_conv_module(chn, feat_ch))
                 if not self.cls_reg_share:
-                    reg_convs.append( self._get_conv_module(chn, feat_ch) )
+                    reg_convs.append(self._get_conv_module(chn, feat_ch))
                 last_feat_ch = feat_ch
             self.cls_stride_convs[key] = cls_convs
             self.reg_stride_convs[key] = reg_convs
@@ -202,10 +218,10 @@ class SCRFDHead(AnchorHead):
                     feat_ch, 4 * (self.reg_max + 1) * self.num_anchors, 3, padding=1)
             if self.use_kps:
                 self.stride_kps[key] = nn.Conv2d(
-                    feat_ch, self.NK*2*self.num_anchors, 3, padding=1)
-        #assert self.num_anchors == 1, 'anchor free version'
-        #extra_gflops /= 1e9
-        #print('extra_gflops: %.6fG'%extra_gflops)
+                    feat_ch, self.NK * 2 * self.num_anchors, 3, padding=1)
+        # assert self.num_anchors == 1, 'anchor free version'
+        # extra_gflops /= 1e9
+        # print('extra_gflops: %.6fG'%extra_gflops)
         if self.use_scale:
             self.scales = nn.ModuleList(
                 [Scale(1.0) for _ in self.anchor_generator.strides])
@@ -215,7 +231,7 @@ class SCRFDHead(AnchorHead):
     def init_weights(self):
         """Initialize weights of the head."""
         for stride, cls_convs in self.cls_stride_convs.items():
-            #print('init cls for stride:', stride)
+            # print('init cls for stride:', stride)
             for m in cls_convs:
                 if not self.dw_conv:
                     try:
@@ -232,9 +248,9 @@ class SCRFDHead(AnchorHead):
                 else:
                     normal_init(m.depthwise_conv.conv, std=0.01)
                     normal_init(m.pointwise_conv.conv, std=0.01)
-        #bias_cls = bias_init_with_prob(0.01)
+        # bias_cls = bias_init_with_prob(0.01)
         bias_cls = -4.595
-        #bias_cls = -1.595
+        # bias_cls = -1.595
         for stride, conv in self.stride_cls.items():
             normal_init(conv, std=0.01, bias=bias_cls)
         for stride, conv in self.stride_reg.items():
@@ -279,7 +295,7 @@ class SCRFDHead(AnchorHead):
         """
         cls_feat = x
         reg_feat = x
-        #print('forward_single in stride:', stride)
+        # print('forward_single in stride:', stride)
         cls_convs = self.cls_stride_convs['0'] if self.strides_share else self.cls_stride_convs[str(stride)]
         for cls_conv in cls_convs:
             cls_feat = cls_conv(cls_feat)
@@ -301,29 +317,29 @@ class SCRFDHead(AnchorHead):
             kps_pred_module = self.stride_kps['0'] if self.strides_share else self.stride_kps[str(stride)]
             kps_pred = kps_pred_module(reg_feat)
         else:
-            kps_pred = bbox_pred.new_zeros( (bbox_pred.shape[0], self.NK*2, bbox_pred.shape[2], bbox_pred.shape[3]) )
+            kps_pred = bbox_pred.new_zeros((bbox_pred.shape[0], self.NK * 2, bbox_pred.shape[2], bbox_pred.shape[3]))
         if torch.onnx.is_in_onnx_export():
             assert not self.use_dfl
             print('in-onnx-export', cls_score.shape, bbox_pred.shape)
-            #print(scale.parameters())
-            #for p in scale.parameters():
-                #print(p.name, p.data)
-                #scale_val = p.data.item()
-                #print(scale_val)
-            #print('EEE1', cls_score.shape)
-            #cls_score = torch.sigmoid(cls_score).reshape(1, self.cls_out_channels, -1).permute(0, 2, 1)
-            #print('EEE2', cls_score.shape)
-            #if self.use_dfl:
+            # print(scale.parameters())
+            # for p in scale.parameters():
+            # print(p.name, p.data)
+            # scale_val = p.data.item()
+            # print(scale_val)
+            # print('EEE1', cls_score.shape)
+            # cls_score = torch.sigmoid(cls_score).reshape(1, self.cls_out_channels, -1).permute(0, 2, 1)
+            # print('EEE2', cls_score.shape)
+            # if self.use_dfl:
             #    bbox_pred = self.integral(bbox_pred) * stride[0]
-            #else:
+            # else:
             #    bbox_pred = bbox_pred.reshape( (-1,4) ) * stride[0]
-            #if self.use_dfl:
+            # if self.use_dfl:
             #    bbox_pred = bbox_pred.reshape(1, (self.reg_max+1)*4, -1).permute(0, 2, 1)
             #    bbox_pred = bbox_pred.reshape( (1, -1, 4, self.reg_max+1) )
             #    bbox_pred = F.softmax(bbox_pred, dim=3)
-            #else:
+            # else:
             #    bbox_pred = bbox_pred.reshape(1, 4, -1).permute(0, 2, 1)
-            #kps_pred = kps_pred.reshape(1, 10, -1).permute(0, 2, 1)
+            # kps_pred = kps_pred.reshape(1, 10, -1).permute(0, 2, 1)
 
             # Add output batch dim, based on pull request #1593
             batch_size = cls_score.shape[0]
@@ -366,7 +382,7 @@ class SCRFDHead(AnchorHead):
             loss_inputs = outs + (gt_bboxes, img_metas)
         else:
             loss_inputs = outs + (gt_bboxes, gt_labels, gt_keypointss, img_metas)
-        #print('AAA', gt_bboxes[0].shape, gt_keypointss[0].shape)
+        # print('AAA', gt_bboxes[0].shape, gt_keypointss[0].shape)
         losses = self.loss(*loss_inputs, gt_bboxes_ignore=gt_bboxes_ignore)
         if proposal_cfg is None:
             return losses
@@ -391,15 +407,13 @@ class SCRFDHead(AnchorHead):
 
         # since feature map sizes of all images are the same, we only compute
         # anchors for one time
-        multi_level_anchors = self.anchor_generator.grid_anchors(
-            featmap_sizes, device)
+        multi_level_anchors = self.anchor_generator.grid_anchors(featmap_sizes, device)
         anchor_list = [multi_level_anchors for _ in range(num_imgs)]
 
         # for each image, we compute valid flags of multi level anchors
         valid_flag_list = []
         for img_id, img_meta in enumerate(img_metas):
-            multi_level_flags = self.anchor_generator.valid_flags(
-                featmap_sizes, img_meta['pad_shape'], device)
+            multi_level_flags = self.anchor_generator.valid_flags(featmap_sizes, img_meta['pad_shape'], device)
             valid_flag_list.append(multi_level_flags)
 
         return anchor_list, valid_flag_list
@@ -459,10 +473,10 @@ class SCRFDHead(AnchorHead):
 
         if self.use_kps:
             kps_pred = kps_pred.permute(0, 2, 3,
-                                          1).reshape(-1, self.NK*2)
-            kps_targets = kps_targets.reshape( (-1, self.NK*2) )
-            kps_weights = kps_weights.reshape( (-1, self.NK*2) )
-            #print('AAA000', kps_targets.shape, kps_weights.shape)
+                                        1).reshape(-1, self.NK * 2)
+            kps_targets = kps_targets.reshape((-1, self.NK * 2))
+            kps_weights = kps_weights.reshape((-1, self.NK * 2))
+            # print('AAA000', kps_targets.shape, kps_weights.shape)
 
         # FG cat_id: [0, num_classes -1], BG cat_id: num_classes
         bg_class_ind = self.num_classes
@@ -480,7 +494,6 @@ class SCRFDHead(AnchorHead):
             weight_targets = weight_targets.max(dim=1)[0][pos_inds]
             pos_decode_bbox_targets = pos_bbox_targets / stride[0]
 
-
             if self.use_dfl:
                 pos_bbox_pred_corners = self.integral(pos_bbox_pred)
                 pos_decode_bbox_pred = distance2bbox(pos_anchor_centers,
@@ -491,25 +504,24 @@ class SCRFDHead(AnchorHead):
             if self.use_kps:
                 pos_kps_targets = kps_targets[pos_inds]
                 pos_kps_pred = kps_pred[pos_inds]
-                #print('CCC000', kps_weights.shape)
+                # print('CCC000', kps_weights.shape)
                 pos_kps_weights = kps_weights.max(dim=1)[0][pos_inds] * weight_targets
-                #pos_kps_weights = kps_weights.max(dim=1)[0][pos_inds]
-                pos_kps_weights = pos_kps_weights.reshape( (-1, 1) )
-                #pos_kps_weights = kps_weights.max(dim=1, keepdims=True)[0][pos_inds]
-                #print('SSS', pos_kps_weights.sum())
+                # pos_kps_weights = kps_weights.max(dim=1)[0][pos_inds]
+                pos_kps_weights = pos_kps_weights.reshape((-1, 1))
+                # pos_kps_weights = kps_weights.max(dim=1, keepdims=True)[0][pos_inds]
+                # print('SSS', pos_kps_weights.sum())
 
-                #pos_decode_kps_targets = pos_kps_targets / stride[0]
-                #pos_decode_kps_pred = distance2kps(pos_anchor_centers, pos_kps_pred)
+                # pos_decode_kps_targets = pos_kps_targets / stride[0]
+                # pos_decode_kps_pred = distance2kps(pos_anchor_centers, pos_kps_pred)
 
                 pos_decode_kps_targets = kps2distance(pos_anchor_centers, pos_kps_targets / stride[0])
                 pos_decode_kps_pred = pos_kps_pred
-                #print('ZZZ', pos_decode_kps_targets.shape, pos_decode_kps_pred.shape)
-                #print(pos_kps_weights[0,:].detach().cpu().numpy())
-                #print(pos_decode_kps_targets[0,:].detach().cpu().numpy())
-                #print(pos_decode_kps_pred[0,:].detach().cpu().numpy())
+                # print('ZZZ', pos_decode_kps_targets.shape, pos_decode_kps_pred.shape)
+                # print(pos_kps_weights[0,:].detach().cpu().numpy())
+                # print(pos_decode_kps_targets[0,:].detach().cpu().numpy())
+                # print(pos_decode_kps_pred[0,:].detach().cpu().numpy())
 
-
-                #print('CCC111', weight_targets.shape, pos_bbox_pred.shape, pos_decode_bbox_pred.shape, pos_kps_pred.shape, pos_decode_kps_pred.shape, pos_kps_weights.shape)
+                # print('CCC111', weight_targets.shape, pos_bbox_pred.shape, pos_decode_bbox_pred.shape, pos_kps_pred.shape, pos_decode_kps_pred.shape, pos_kps_weights.shape)
 
             if use_qscore:
                 score[pos_inds] = bbox_overlaps(
@@ -559,10 +571,8 @@ class SCRFDHead(AnchorHead):
             weight=label_weights,
             avg_factor=num_total_samples)
 
-
         return loss_cls, loss_bbox, loss_dfl, loss_kps, weight_targets.sum()
 
-    @force_fp32(apply_to=('cls_scores', 'bbox_preds'))
     def loss(self,
              cls_scores,
              bbox_preds,
@@ -613,32 +623,32 @@ class SCRFDHead(AnchorHead):
             return None
 
         (anchor_list, labels_list, label_weights_list, bbox_targets_list,
-         bbox_weights_list, keypoints_targets_list, keypoints_weights_list, num_total_pos, num_total_neg) = cls_reg_targets
+         bbox_weights_list, keypoints_targets_list, keypoints_weights_list, num_total_pos,
+         num_total_neg) = cls_reg_targets
 
         num_total_samples = reduce_mean(
             torch.tensor(num_total_pos, dtype=torch.float,
                          device=device)).item()
         num_total_samples = max(num_total_samples, 1.0)
 
-        losses_cls, losses_bbox, losses_dfl, losses_kps,\
+        losses_cls, losses_bbox, losses_dfl, losses_kps, \
             avg_factor = multi_apply(
-                self.loss_single,
-                anchor_list,
-                cls_scores,
-                bbox_preds,
-                kps_preds,
-                labels_list,
-                label_weights_list,
-                bbox_targets_list,
-                keypoints_targets_list,
-                keypoints_weights_list,
-                self.anchor_generator.strides,
-                num_total_samples=num_total_samples)
+            self.loss_single,
+            anchor_list,
+            cls_scores,
+            bbox_preds,
+            kps_preds,
+            labels_list,
+            label_weights_list,
+            bbox_targets_list,
+            keypoints_targets_list,
+            keypoints_weights_list,
+            self.anchor_generator.strides,
+            num_total_samples=num_total_samples)
 
-        #if self.train_step%100==0:
+        # if self.train_step%100==0:
         #    print('loss_cls:', losses_cls)
         #    print('avg_factor:', avg_factor)
-
 
         avg_factor = sum(avg_factor)
         avg_factor = reduce_mean(avg_factor).item()
@@ -652,18 +662,110 @@ class SCRFDHead(AnchorHead):
             losses['loss_dfl'] = losses_dfl
         return losses
 
-    @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'kps_preds'))
+    # @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'kps_preds'))
+    # def get_bboxes(self,
+    #                cls_scores,
+    #                bbox_preds,
+    #                kps_preds,
+    #                img_metas,
+    #                cfg=None,
+    #                rescale=False,
+    #                with_nms=True):
+    #     """Transform network output for a batch into bbox predictions.
+    #
+    #     Args:
+    #         cls_scores (list[Tensor]): Box scores for each scale level
+    #             Has shape (N, num_anchors * num_classes, H, W)
+    #         bbox_preds (list[Tensor]): Box energies / deltas for each scale
+    #             level with shape (N, num_anchors * 4, H, W)
+    #         img_metas (list[dict]): Meta information of each image, e.g.,
+    #             image size, scaling factor, etc.
+    #         cfg (mmcv.Config | None): Test / postprocessing configuration,
+    #             if None, test_cfg would be used
+    #         rescale (bool): If True, return boxes in original image space.
+    #             Default: False.
+    #         with_nms (bool): If True, do nms before return boxes.
+    #             Default: True.
+    #
+    #     Returns:
+    #         list[tuple[Tensor, Tensor]]: Each item in result_list is 2-tuple.
+    #             The first item is an (n, 5) tensor, where the first 4 columns
+    #             are bounding box positions (tl_x, tl_y, br_x, br_y) and the
+    #             5-th column is a score between 0 and 1. The second item is a
+    #             (n,) tensor where each item is the predicted class labelof the
+    #             corresponding box.
+    #
+    #     Example:
+    #         >>> import mmcv
+    #         >>> self = AnchorHead(
+    #         >>>     num_classes=9,
+    #         >>>     in_channels=1,
+    #         >>>     anchor_generator=dict(
+    #         >>>         type='AnchorGenerator',
+    #         >>>         scales=[8],
+    #         >>>         ratios=[0.5, 1.0, 2.0],
+    #         >>>         strides=[4,]))
+    #         >>> img_metas = [{'img_shape': (32, 32, 3), 'scale_factor': 1}]
+    #         >>> cfg = mmcv.Config(dict(
+    #         >>>     score_thr=0.00,
+    #         >>>     nms=dict(type='nms', iou_thr=1.0),
+    #         >>>     max_per_img=10))
+    #         >>> feat = torch.rand(1, 1, 3, 3)
+    #         >>> cls_score, bbox_pred = self.forward_single(feat)
+    #         >>> # note the input lists are over different levels, not images
+    #         >>> cls_scores, bbox_preds = [cls_score], [bbox_pred]
+    #         >>> result_list = self.get_bboxes(cls_scores, bbox_preds,
+    #         >>>                               img_metas, cfg)
+    #         >>> det_bboxes, det_labels = result_list[0]
+    #         >>> assert len(result_list) == 1
+    #         >>> assert det_bboxes.shape[1] == 5
+    #         >>> assert len(det_bboxes) == len(det_labels) == cfg.max_per_img
+    #     """
+    #     assert len(cls_scores) == len(bbox_preds)
+    #     num_levels = len(cls_scores)
+    #
+    #     device = cls_scores[0].device
+    #     featmap_sizes = [cls_scores[i].shape[-2:] for i in range(num_levels)]
+    #     mlvl_anchors = self.anchor_generator.grid_anchors(
+    #         featmap_sizes, device=device)
+    #
+    #     result_list = []
+    #     for img_id in range(len(img_metas)):
+    #         cls_score_list = [
+    #             cls_scores[i][img_id].detach() for i in range(num_levels)
+    #         ]
+    #         bbox_pred_list = [
+    #             bbox_preds[i][img_id].detach() for i in range(num_levels)
+    #         ]
+    #         img_shape = img_metas[img_id]['img_shape']
+    #         scale_factor = img_metas[img_id]['scale_factor']
+    #         if with_nms:
+    #             # some heads don't support with_nms argument
+    #             proposals = self._get_bboxes_single(cls_score_list,
+    #                                                 bbox_pred_list,
+    #                                                 mlvl_anchors, img_shape,
+    #                                                 scale_factor, cfg, rescale)
+    #         else:
+    #             proposals = self._get_bboxes_single(cls_score_list,
+    #                                                 bbox_pred_list,
+    #                                                 mlvl_anchors, img_shape,
+    #                                                 scale_factor, cfg, rescale,
+    #                                                 with_nms)
+    #         result_list.append(proposals)
+    #     return result_list
+
     def get_bboxes(self,
                    cls_scores,
                    bbox_preds,
                    kps_preds,
-                   img_metas,
+                   img_metas: list[dict],
                    cfg=None,
                    rescale=False,
                    with_nms=True):
         """Transform network output for a batch into bbox predictions.
 
         Args:
+            kps_preds:
             cls_scores (list[Tensor]): Box scores for each scale level
                 Has shape (N, num_anchors * num_classes, H, W)
             bbox_preds (list[Tensor]): Box energies / deltas for each scale
@@ -716,43 +818,50 @@ class SCRFDHead(AnchorHead):
 
         device = cls_scores[0].device
         featmap_sizes = [cls_scores[i].shape[-2:] for i in range(num_levels)]
-        mlvl_anchors = self.anchor_generator.grid_anchors(
-            featmap_sizes, device=device)
+        mlvl_anchors = self.anchor_generator.grid_anchors(featmap_sizes, device=device)
 
         result_list = []
-        for img_id in range(len(img_metas)):
+        n = len(img_metas)
+        for img_id in range(n):
             cls_score_list = [
                 cls_scores[i][img_id].detach() for i in range(num_levels)
             ]
             bbox_pred_list = [
                 bbox_preds[i][img_id].detach() for i in range(num_levels)
             ]
+            kps_pred_list = [
+                kps_preds[i][img_id].detach() for i in range(num_levels)
+            ] if kps_preds is not None else None  # Handle keypoints
+
             img_shape = img_metas[img_id]['img_shape']
             scale_factor = img_metas[img_id]['scale_factor']
             if with_nms:
                 # some heads don't support with_nms argument
-                proposals = self._get_bboxes_single(cls_score_list,
-                                                    bbox_pred_list,
-                                                    mlvl_anchors, img_shape,
-                                                    scale_factor, cfg, rescale)
+                proposals = self._get_bboxes_single_updated(cls_score_list,
+                                                            bbox_pred_list,
+                                                            kps_pred_list,
+                                                            mlvl_anchors, img_shape,
+                                                            scale_factor, cfg, rescale)
             else:
-                proposals = self._get_bboxes_single(cls_score_list,
-                                                    bbox_pred_list,
-                                                    mlvl_anchors, img_shape,
-                                                    scale_factor, cfg, rescale,
-                                                    with_nms)
+                proposals = self._get_bboxes_single_updated(cls_score_list,
+                                                            bbox_pred_list,
+                                                            kps_pred_list,
+                                                            mlvl_anchors, img_shape,
+                                                            scale_factor, cfg, rescale,
+                                                            with_nms)
             result_list.append(proposals)
         return result_list
 
-    def _get_bboxes_single(self,
-                           cls_scores,
-                           bbox_preds,
-                           mlvl_anchors,
-                           img_shape,
-                           scale_factor,
-                           cfg,
-                           rescale=False,
-                           with_nms=True):
+    def _get_bboxes_single_updated(self,
+                                   cls_scores,
+                                   bbox_preds,
+                                   kps_preds,
+                                   mlvl_anchors,
+                                   img_shape,
+                                   scale_factor,
+                                   cfg,
+                                   rescale=False,
+                                   with_nms=True):
         """Transform outputs for a single batch item into labeled boxes.
 
         Args:
@@ -787,6 +896,107 @@ class SCRFDHead(AnchorHead):
         assert len(cls_scores) == len(bbox_preds) == len(mlvl_anchors)
         mlvl_bboxes = []
         mlvl_scores = []
+        mlvl_keypoints = []
+
+        bbox_lst = []
+        score_lst = []
+        kp_lst = []
+
+        for cls_score, bbox_pred, kps_pred, stride, anchors in zip(
+                cls_scores, bbox_preds, kps_preds, self.anchor_generator.strides,
+                mlvl_anchors):
+            assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
+            assert stride[0] == stride[1]
+
+            scores = cls_score.permute(1, 2, 0).reshape(-1, self.cls_out_channels).sigmoid()
+            bbox_pred = bbox_pred.permute(1, 2, 0)
+            if self.use_dfl:
+                bbox_pred = self.integral(bbox_pred) * stride[0]
+            else:
+                bbox_pred = bbox_pred.reshape((-1, 4)) * stride[0]
+
+            # Process keypoints if available
+            if kps_pred is not None:
+                kps_pred = kps_pred.permute(1, 2, 0).reshape((-1, self.NK * 2)) * stride[0]  ## it's working
+
+            nms_pre = cfg.get('nms_pre', -1)
+            if nms_pre > 0 and scores.shape[0] > nms_pre:
+                max_scores, _ = scores.max(dim=1)
+                _, topk_inds = max_scores.topk(nms_pre)
+                anchors = anchors[topk_inds, :]
+                bbox_pred = bbox_pred[topk_inds, :]
+                scores = scores[topk_inds, :]
+                kps_pred = kps_pred[topk_inds, :]
+
+            bboxes = distance2bbox(
+                self.anchor_center(anchors), bbox_pred, max_shape=img_shape)
+
+            kpss = distance2kps(self.anchor_center(anchors), kps_pred, max_shape=img_shape)
+            kpss = kpss.reshape((kpss.shape[0], -1, 2))
+
+            sc = scores.detach().cpu().numpy()
+            bbx = bboxes.detach().cpu().numpy()
+            kp = kpss.detach().cpu().numpy()
+
+            pos_index = np.where(sc >= 0.5)[0]
+
+            mlvl_bboxes.append(bboxes)
+            mlvl_scores.append(scores)
+            mlvl_keypoints.append(kpss)
+            score_lst.append(sc[pos_index])
+            bbox_lst.append(bbx[pos_index])
+            kp_lst.append(kp[pos_index])
+
+        return mlvl_bboxes, mlvl_scores, mlvl_keypoints, score_lst, bbox_lst, kp_lst
+
+    def _get_bboxes_single(self,
+                           cls_scores,
+                           bbox_preds,
+                           mlvl_anchors,
+                           img_shape,
+                           scale_factor,
+                           cfg,
+                           rescale=False,
+                           with_nms=True,
+                           nms_pre=-1,
+                           min_bbox_size=0,
+                           score_thr=0.02,
+                           nms=dict(type='nms', iou_threshold=0.45),
+                           max_per_img=-1):
+        """Transform outputs for a single batch item into labeled boxes.
+
+        Args:
+            cls_scores (list[Tensor]): Box scores for a single scale level
+                has shape (num_classes, H, W).
+            bbox_preds (list[Tensor]): Box distribution logits for a single
+                scale level with shape (4*(n+1), H, W), n is max value of
+                integral set.
+            mlvl_anchors (list[Tensor]): Box reference for a single scale level
+                with shape (num_total_anchors, 4).
+            img_shape (tuple[int]): Shape of the input image,
+                (height, width, 3).
+            scale_factor (ndarray): Scale factor of the image arange as
+                (w_scale, h_scale, w_scale, h_scale).
+            cfg (mmcv.Config | None): Test / postprocessing configuration,
+                if None, test_cfg would be used.
+            rescale (bool): If True, return boxes in original image space.
+                Default: False.
+            with_nms (bool): If True, do nms before return boxes.
+                Default: True.
+
+        Returns:
+            tuple(Tensor):
+                det_bboxes (Tensor): Bbox predictions in shape (N, 5), where
+                    the first 4 columns are bounding box positions
+                    (tl_x, tl_y, br_x, br_y) and the 5-th column is a score
+                    between 0 and 1.
+                det_labels (Tensor): A (N,) tensor where each item is the
+                    predicted class label of the corresponding box.
+        """
+        # cfg = self.test_cfg if cfg is None else cfg
+        assert len(cls_scores) == len(bbox_preds) == len(mlvl_anchors)
+        mlvl_bboxes = []
+        mlvl_scores = []
         for cls_score, bbox_pred, stride, anchors in zip(
                 cls_scores, bbox_preds, self.anchor_generator.strides,
                 mlvl_anchors):
@@ -799,10 +1009,10 @@ class SCRFDHead(AnchorHead):
             if self.use_dfl:
                 bbox_pred = self.integral(bbox_pred) * stride[0]
             else:
-                bbox_pred = bbox_pred.reshape( (-1,4) ) * stride[0]
+                bbox_pred = bbox_pred.reshape((-1, 4)) * stride[0]
 
-            nms_pre = cfg.get('nms_pre', -1)
-            if nms_pre > 0 and scores.shape[0] > nms_pre:
+            # nms_pre = cfg.get('nms_pre', -1)
+            if nms_pre and nms_pre > 0 and scores.shape[0] > nms_pre:
                 max_scores, _ = scores.max(dim=1)
                 _, topk_inds = max_scores.topk(nms_pre)
                 anchors = anchors[topk_inds, :]
@@ -827,8 +1037,8 @@ class SCRFDHead(AnchorHead):
 
         if with_nms:
             det_bboxes, det_labels = multiclass_nms(mlvl_bboxes, mlvl_scores,
-                                                    cfg.score_thr, cfg.nms,
-                                                    cfg.max_per_img)
+                                                    score_thr, nms,
+                                                    max_per_img)
             return det_bboxes, det_labels
         else:
             return mlvl_bboxes, mlvl_scores
@@ -869,21 +1079,21 @@ class SCRFDHead(AnchorHead):
             gt_labels_list = [None for _ in range(num_imgs)]
         if gt_keypointss_list is None:
             gt_keypointss_list = [None for _ in range(num_imgs)]
-        #print('QQQ:', num_imgs, gt_bboxes_list[0].shape)
+        # print('QQQ:', num_imgs, gt_bboxes_list[0].shape)
         (all_anchors, all_labels, all_label_weights, all_bbox_targets,
          all_bbox_weights, all_keypoints_targets, all_keypoints_weights,
          pos_inds_list, neg_inds_list) = multi_apply(
-             self._get_target_single,
-             anchor_list,
-             valid_flag_list,
-             num_level_anchors_list,
-             gt_bboxes_list,
-             gt_bboxes_ignore_list,
-             gt_labels_list,
-             gt_keypointss_list,
-             img_metas,
-             label_channels=label_channels,
-             unmap_outputs=unmap_outputs)
+            self._get_target_single,
+            anchor_list,
+            valid_flag_list,
+            num_level_anchors_list,
+            gt_bboxes_list,
+            gt_bboxes_ignore_list,
+            gt_labels_list,
+            gt_keypointss_list,
+            img_metas,
+            label_channels=label_channels,
+            unmap_outputs=unmap_outputs)
         # no valid anchors
         if any([labels is None for labels in all_labels]):
             return None
@@ -900,9 +1110,9 @@ class SCRFDHead(AnchorHead):
         bbox_weights_list = images_to_levels(all_bbox_weights,
                                              num_level_anchors)
         keypoints_targets_list = images_to_levels(all_keypoints_targets,
-                                             num_level_anchors)
+                                                  num_level_anchors)
         keypoints_weights_list = images_to_levels(all_keypoints_weights,
-                                             num_level_anchors)
+                                                  num_level_anchors)
         return (anchors_list, labels_list, label_weights_list,
                 bbox_targets_list, bbox_weights_list, keypoints_targets_list, keypoints_weights_list,
                 num_total_pos,
@@ -960,13 +1170,13 @@ class SCRFDHead(AnchorHead):
                                            img_meta['img_shape'][:2],
                                            self.train_cfg.allowed_border)
         if not inside_flags.any():
-            return (None, ) * 7
+            return (None,) * 7
         # assign gt and sample anchors
         anchors = flat_anchors[inside_flags, :]
 
         num_level_anchors_inside = self.get_num_level_anchors_inside(
             num_level_anchors, inside_flags)
-        if self.assigner.__class__.__name__=='ATSSAssigner':
+        if self.assigner.__class__.__name__ == 'ATSSAssigner':
             assign_result = self.assigner.assign(anchors, num_level_anchors_inside,
                                                  gt_bboxes, gt_bboxes_ignore,
                                                  gt_labels)
@@ -981,9 +1191,9 @@ class SCRFDHead(AnchorHead):
         num_valid_anchors = anchors.shape[0]
         bbox_targets = torch.zeros_like(anchors)
         bbox_weights = torch.zeros_like(anchors)
-        kps_targets = anchors.new_zeros(size=(anchors.shape[0], self.NK*2))
-        kps_weights = anchors.new_zeros(size=(anchors.shape[0], self.NK*2))
-        labels = anchors.new_full((num_valid_anchors, ),
+        kps_targets = anchors.new_zeros(size=(anchors.shape[0], self.NK * 2))
+        kps_weights = anchors.new_zeros(size=(anchors.shape[0], self.NK * 2))
+        labels = anchors.new_full((num_valid_anchors,),
                                   self.num_classes,
                                   dtype=torch.long)
         label_weights = anchors.new_zeros(num_valid_anchors, dtype=torch.float)
@@ -996,10 +1206,10 @@ class SCRFDHead(AnchorHead):
             bbox_weights[pos_inds, :] = 1.0
             if self.use_kps:
                 pos_assigned_gt_inds = sampling_result.pos_assigned_gt_inds
-                #print('BBB', anchors.shape, gt_bboxes.shape, gt_keypointss.shape, pos_inds.shape, bbox_targets.shape, pos_bbox_targets.shape)
-                kps_targets[pos_inds, :] = gt_keypointss[pos_assigned_gt_inds,:,:2].reshape( (-1, self.NK*2) )
-                kps_weights[pos_inds, :] = torch.mean(gt_keypointss[pos_assigned_gt_inds,:,2], dim=1, keepdims=True)
-            #kps_weights[pos_inds, :] = 1.0
+                # print('BBB', anchors.shape, gt_bboxes.shape, gt_keypointss.shape, pos_inds.shape, bbox_targets.shape, pos_bbox_targets.shape)
+                kps_targets[pos_inds, :] = gt_keypointss[pos_assigned_gt_inds, :, :2].reshape((-1, self.NK * 2))
+                kps_weights[pos_inds, :] = torch.mean(gt_keypointss[pos_assigned_gt_inds, :, 2], dim=1, keepdims=True)
+            # kps_weights[pos_inds, :] = 1.0
             if gt_labels is None:
                 # Only rpn gives gt_labels as None
                 # Foreground is the first class

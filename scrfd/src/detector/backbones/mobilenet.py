@@ -1,10 +1,11 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+import re
+from collections import OrderedDict
 
 import torch
 import torch.nn as nn
 from torch.nn.modules.batchnorm import _BatchNorm
+
+from detector.utils.utils import kaiming_init, constant_init
 
 
 class MobileNetV1(nn.Module):
@@ -110,8 +111,27 @@ class MobileNetV1(nn.Module):
                 Defaults to None.
         """
         if isinstance(pretrained, str):
-            logger = get_root_logger()
-            load_checkpoint(self, pretrained, strict=False, logger=logger)
+            checkpoint = torch.load(pretrained, map_location=torch.device('cpu'))  # Load on CPU
+            # OrderedDict is a subclass of dict
+            if not isinstance(checkpoint, dict):
+                raise RuntimeError(
+                    f'No state_dict found in checkpoint file {pretrained}')
+            # get state_dict from checkpoint
+            if 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            else:
+                state_dict = checkpoint
+
+            # strip prefix of state_dict
+            metadata = getattr(state_dict, '_metadata', OrderedDict())
+            revise_keys: list = [(r'^module\.', '')]
+            for p, r in revise_keys:
+                state_dict = OrderedDict(
+                    {re.sub(p, r, k): v
+                     for k, v in state_dict.items()})
+            # Keep metadata in state_dict
+            state_dict._metadata = metadata
+            self.load_state_dict(state_dict=state_dict)
         elif pretrained is None:
             for m in self.modules():
                 if isinstance(m, nn.Conv2d):
