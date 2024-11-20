@@ -9,7 +9,6 @@ from detector.backbones.mobilenet import MobileNetV1
 from detector.dense_heads.scrfd_head import SCRFDHead
 from detector.dnn.scrfd import SCRFD
 from detector.necks.pafpn import PAFPN
-from detector.utils.transforms import nms
 
 
 class FaceDetector:
@@ -137,7 +136,7 @@ class FaceDetector:
         with torch.no_grad():
             result = self.model(return_loss=False, rescale=True, **data)[0]
 
-        return resized_img, self.extract_coordinates(result, (resized_img.shape[1], resized_img.shape[0]))
+        return self.extract_coordinates(result, (resized_img.shape[1], resized_img.shape[0]))
 
     def extract_coordinates(self, result, img_shape=(640, 640)):
         detections = []
@@ -147,7 +146,7 @@ class FaceDetector:
         for i in range(len(bboxes)):
             # parse bbox
             bbox_raw = bboxes[i]
-            x_min, y_min, x_max, y_max, _ = bbox_raw
+            x_min, y_min, x_max, y_max, score = bbox_raw
             x_min /= img_shape[0]
             y_min /= img_shape[1]
             x_max /= img_shape[0]
@@ -157,12 +156,13 @@ class FaceDetector:
                 'x_min': x_min,
                 'y_min': y_min,
                 'x_max': x_max,
-                'y_max': y_max
+                'y_max': y_max,
+                'score': score
             }
 
             # parse keypoints
             kps_raw = kps[i]
-            landmarks = []
+            landmarks = {}
 
             # total 5 keypoints
             for j in range(5):
@@ -174,7 +174,18 @@ class FaceDetector:
                     'x': x,
                     'y': y
                 }
-                landmarks.append(key_point)
+
+                match j:
+                    case 0:
+                        landmarks['left_eye'] = key_point
+                    case 1:
+                        landmarks['right_eye'] = key_point
+                    case 2:
+                        landmarks['nose'] = key_point
+                    case 3:
+                        landmarks['left_lip'] = key_point
+                    case 4:
+                        landmarks['right_lip'] = key_point
 
             detections.append({
                 'bbox': bbox,
